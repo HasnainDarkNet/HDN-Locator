@@ -17,9 +17,4 @@ HDN-Locator is a powerful Python-based GPS tracking tool that captures exact coo
 - 🎬 **Fake YouTube Page** - Convincing UI design
 - 💾 **Auto Save** - All data saved in JSON format
 
-## 🚀 Quick Start
 
-```bash
-git clone https://github.com/HasnainDarkNet/HDN-Locator
-cd HDN-Locator
-python3 hdn_locator.py<img width="1672" height="941" alt="ChatGPT Image May 5, 2026, 12_13_35 AM" src="https://github.com/user-attachments/assets/6be87741-6f66-4f53-9da8-05690a929792" />
